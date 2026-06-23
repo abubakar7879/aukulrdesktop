@@ -156,25 +156,7 @@ def get_online_date() -> datetime.date | None:
 # ─── Expiry cleanup ──────────────────────────────────────────────────────────
 
 def perform_expiry_cleanup(config: dict):
-    log.warning("EXPIRY REACHED – performing cleanup...")
-    dirs_to_clean = list(set([
-        config["redis_dir"], config["orchestrator_dir"],
-    ]))
-
-    for d in dirs_to_clean:
-        dp = Path(d)
-        if dp.exists():
-            for item in dp.iterdir():
-                try:
-                    if item.is_dir():
-                        shutil.rmtree(item)
-                    else:
-                        item.unlink()
-                    log.info(f"Deleted: {item}")
-                except Exception as e:
-                    log.error(f"Failed to delete {item}: {e}")
-
-    log.warning("Cleanup complete.")
+    log.warning("EXPIRY REACHED – application will not start services.")
 
 # ─── Process management ──────────────────────────────────────────────────────
 
@@ -329,7 +311,7 @@ def run_app(config: dict):
             root.withdraw()
             messagebox.showerror(
                 "Application Expired",
-                "This application has expired.\nPlease contact support."
+                "Application expired — services were not started.\n\nPlease contact support."
             )
             root.destroy()
             sys.exit(0)

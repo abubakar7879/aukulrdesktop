@@ -91,14 +91,11 @@ DEFAULT_CONFIG = {
     "orchestrator_dir": r"C:\Users\pc\Documents\PPE",
     "backend_dir":      r"C:\Users\pc\Documents\PPEB",
     "frontend_dir":     r"C:\Users\pc\Documents\PPEUI",
-    "expiry_date":      "2026-06-01",
+    "license_api_url":  "https://license.aukulr.ai/api/license/validate",
+    "license_token":    "",
 }
 
-DATETIME_APIS = [
-    "https://worldtimeapi.org/api/timezone/Etc/UTC",
-    "http://worldclockapi.com/api/json/utc/now",
-    "https://timeapi.io/api/time/current/zone?timeZone=UTC",
-]
+APP_VERSION = "1.0.0"
 
 # ─── Crypto helpers ───────────────────────────────────────────────────────────
 
@@ -147,68 +144,105 @@ def save_config(config: dict, password: str):
     CONFIG_FILE.write_bytes(f.encrypt(json.dumps(config).encode()))
     _save_runtime_config(config)
 
-# ─── Online date check ────────────────────────────────────────────────────────
+# ─── License validation ──────────────────────────────────────────────────────
 
-def get_current_date() -> datetime.date:
-    """Try online APIs first, fall back to local PC clock."""
-    for url in DATETIME_APIS:
+def _hidden_check_output(cmd: list[str]) -> str:
+    startupinfo = None
+    creationflags = 0
+    if os.name == "nt":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = 0
+        creationflags = subprocess.CREATE_NO_WINDOW
+    return subprocess.check_output(
+        cmd,
+        text=True,
+        stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        timeout=5,
+        startupinfo=startupinfo,
+        creationflags=creationflags,
+    )
+
+def _clean_id(value: str) -> str:
+    value = value.strip().upper()
+    return "".join(ch for ch in value if ch.isalnum() or ch in "-_")
+
+def get_cpu_id() -> str | None:
+    """Return the processor ID used as the MVP hardware ID."""
+    commands = [
+        ["powershell", "-NoProfile", "-Command",
+         "(Get-CimInstance Win32_Processor | Select-Object -First 1 -ExpandProperty ProcessorId).Trim()"],
+        ["wmic", "cpu", "get", "ProcessorId"],
+    ]
+    for cmd in commands:
         try:
-            r = requests.get(url, timeout=8)
-            data = r.json()
-            if "datetime" in data:
-                return datetime.date.fromisoformat(data["datetime"][:10])
-            if "currentDateTime" in data:
-                return datetime.date.fromisoformat(data["currentDateTime"][:10])
-            if "year" in data and "month" in data and "day" in data:
-                return datetime.date(data["year"], data["month"], data["day"])
+            output = _hidden_check_output(cmd)
+            for line in output.splitlines():
+                line = line.strip()
+                if not line or line.lower() == "processorid":
+                    continue
+                cpu_id = _clean_id(line)
+                if cpu_id:
+                    return cpu_id
         except Exception as e:
-            log.warning(f"API {url} failed: {e}")
-    log.warning("All online date APIs failed – falling back to local PC clock.")
-    return datetime.date.today()
+            log.warning(f"CPU ID command failed ({cmd[0]}): {e}")
+    return None
 
-# ─── Expiry cleanup ──────────────────────────────────────────────────────────
+def _mask_token(token: str) -> str:
+    token = token.strip()
+    if len(token) <= 4:
+        return "****"
+    return f"****{token[-4:]}"
 
-def perform_expiry_cleanup(config: dict):
-    log.warning("EXPIRY REACHED – performing cleanup...")
-    dirs_to_clean = list(set([
-        config["redis_dir"], config["orchestrator_dir"],
-        config["backend_dir"], config["frontend_dir"],
-    ]))
+def validate_license(config: dict) -> tuple[bool, str, dict]:
+    api_url = (config.get("license_api_url") or "").strip()
+    token = (config.get("license_token") or "").strip()
 
-    backend_dir = Path(config["backend_dir"])
-    public_folder = backend_dir / "public"
+    if not api_url:
+        return False, "License API URL is missing. Please contact support.", {}
+    if not token:
+        return False, "License token is missing. Please contact support.", {}
 
-    # Preserve PPEB/public
-    preserved_tmp = None
-    if public_folder.exists():
-        preserved_tmp = Path(os.environ.get("TEMP", ".")) / "aukulr_public_backup"
-        if preserved_tmp.exists():
-            shutil.rmtree(preserved_tmp)
-        shutil.copytree(public_folder, preserved_tmp)
-        log.info("Preserved PPEB/public folder.")
+    cpu_id = get_cpu_id()
+    if not cpu_id:
+        return False, "Could not read CPU ID for license validation. Please contact support.", {}
 
-    # Delete everything in each directory
-    for d in dirs_to_clean:
-        dp = Path(d)
-        if dp.exists():
-            for item in dp.iterdir():
-                try:
-                    if item.is_dir():
-                        shutil.rmtree(item)
-                    else:
-                        item.unlink()
-                    log.info(f"Deleted: {item}")
-                except Exception as e:
-                    log.error(f"Failed to delete {item}: {e}")
+    payload = {
+        "hardwareId": cpu_id,
+        "hardwareType": "cpu_id",
+        "token": token,
+        "app": "AukulrManager",
+        "appVersion": APP_VERSION,
+    }
 
-    # Restore public folder
-    if preserved_tmp and preserved_tmp.exists():
-        backend_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(preserved_tmp, public_folder)
-        shutil.rmtree(preserved_tmp)
-        log.info("Restored PPEB/public folder.")
+    log.info(f"Validating license for CPU ID ending {cpu_id[-6:]} with token {_mask_token(token)}")
+    try:
+        response = requests.post(api_url, json=payload, timeout=10)
+    except requests.RequestException as e:
+        log.error(f"License server unreachable: {e}")
+        return False, "License server is unreachable. Please check internet connection or contact support.", {}
 
-    log.warning("Cleanup complete.")
+    try:
+        data = response.json()
+    except ValueError:
+        log.error(f"License server returned non-JSON response: HTTP {response.status_code}")
+        return False, "License server returned an invalid response. Please contact support.", {}
+
+    if response.status_code >= 400:
+        reason = data.get("reason") or f"http_{response.status_code}"
+        message = data.get("message") or f"License validation failed: {reason}"
+        log.warning(f"License rejected: {reason}")
+        return False, message, data
+
+    if data.get("valid") is True:
+        log.info("License validation passed.")
+        return True, data.get("message", "License valid."), data
+
+    reason = data.get("reason") or "invalid"
+    message = data.get("message") or f"License validation failed: {reason}"
+    log.warning(f"License rejected: {reason}")
+    return False, message, data
 
 # ─── Process management ──────────────────────────────────────────────────────
 
@@ -363,36 +397,20 @@ def run_app(config: dict):
     from tkinter import messagebox, scrolledtext
     import tkinter.simpledialog as sd
 
-    # ── Step 1: Check expiry BEFORE showing anything ──
-    log.info("Checking expiry before launch...")
-    today = get_current_date()
-    expiry = datetime.date.fromisoformat(config["expiry_date"])
-    cleanup_marker = APP_DIR / "cleanup_done.flag"
-    expired = today > expiry
-
-    if expired:
-        if not cleanup_marker.exists():
-            # First time expired — perform cleanup and exit
-            log.warning(f"EXPIRED: {today} > {expiry}")
-            perform_expiry_cleanup(config)
-            cleanup_marker.write_text(str(today))
-            root = tk.Tk()
-            root.withdraw()
-            messagebox.showerror(
-                "Application Expired",
-                "This application has expired.\nPlease contact support."
-            )
-            root.destroy()
-            sys.exit(0)
-        else:
-            # Already cleaned up — let the app open so master can extend the date
-            log.info("Expired but cleanup already done — opening for master access.")
-    else:
-        log.info(f"Expiry check passed: {today} <= {expiry}")
-        # If date was extended, remove the cleanup marker
-        if cleanup_marker.exists():
-            cleanup_marker.unlink()
-            log.info("Cleanup marker removed — expiry extended.")
+    # Validate license before showing the service dashboard or starting anything.
+    log.info("Validating license before launch...")
+    license_ok, license_message, _ = validate_license(config)
+    if not license_ok:
+        log.warning(f"License validation failed before launch: {license_message}")
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror(
+            "License Validation Failed",
+            f"{license_message}\n\nServices were not started."
+        )
+        root.destroy()
+        sys.exit(0)
+    log.info("License validation passed before launch.")
 
     # ── Step 2: Build the GUI ──
     manager = ProcessManager(config)
@@ -492,7 +510,8 @@ def run_app(config: dict):
             ("orchestrator_dir", "Orchestrator Dir"),
             ("backend_dir", "Backend Dir"),
             ("frontend_dir", "Frontend Dir"),
-            ("expiry_date", "Expiry (YYYY-MM-DD)"),
+            ("license_api_url", "License API"),
+            ("license_token", "License Token"),
         ]:
             row = tk.Frame(cfg_frame, bg="#1e1e2e")
             row.pack(fill="x", pady=2)
@@ -500,16 +519,18 @@ def run_app(config: dict):
                      width=18, anchor="w").pack(side="left")
             var = tk.StringVar(value=config.get(key, ""))
             tk.Entry(row, textvariable=var, font=("Consolas", 9),
-                     bg="#313244", fg=TEXT, insertbackground=TEXT, relief="flat"
+                     bg="#313244", fg=TEXT, insertbackground=TEXT, relief="flat",
+                     show="*" if key == "license_token" else ""
                      ).pack(side="left", fill="x", expand=True, ipady=2)
             fields[key] = var
 
         def save_changes():
             new_cfg = {k: v.get().strip() for k, v in fields.items()}
-            try:
-                datetime.date.fromisoformat(new_cfg["expiry_date"])
-            except ValueError:
-                messagebox.showerror("Error", "Invalid date. Use YYYY-MM-DD.", parent=root)
+            if not new_cfg["license_api_url"]:
+                messagebox.showerror("Error", "License API URL is required.", parent=root)
+                return
+            if not new_cfg["license_token"]:
+                messagebox.showerror("Error", "License token is required.", parent=root)
                 return
             save_config(new_cfg, pw)
             config.update(new_cfg)
@@ -580,6 +601,19 @@ def run_app(config: dict):
             log.info("Start already in progress, skipping duplicate call.")
             return
         started[0] = True
+        license_ok, license_message, _ = validate_license(config)
+        if not license_ok:
+            log.warning(f"License validation failed before service start: {license_message}")
+            def fail():
+                status_msg.set("License validation failed")
+                messagebox.showerror(
+                    "License Validation Failed",
+                    f"{license_message}\n\nServices were not started.",
+                    parent=root,
+                )
+            root.after(0, fail)
+            started[0] = False
+            return
         def cb(msg):
             root.after(0, lambda m=msg: status_msg.set(m))
         manager.start_all(status_callback=cb)
@@ -610,12 +644,9 @@ def run_app(config: dict):
         update_status()
         root.after(5000, periodic)
 
-    # ── Step 3: Auto-start services (only if not expired) ──
+    # Auto-start services after license validation has passed.
     root.after(200, periodic)
-    if not expired:
-        root.after(500, lambda: threading.Thread(target=_start_thread, daemon=True).start())
-    else:
-        status_msg.set("Expired — press Ctrl+Shift+M to extend")
+    root.after(500, lambda: threading.Thread(target=_start_thread, daemon=True).start())
 
     root.mainloop()
 
@@ -644,12 +675,33 @@ def first_time_setup():
         root.destroy()
         sys.exit(1)
 
+    license_api_url = sd.askstring(
+        "License Setup",
+        "Validation API URL:",
+        initialvalue=DEFAULT_CONFIG["license_api_url"],
+        parent=root,
+    )
+    if not license_api_url:
+        messagebox.showerror("Error", "License API URL is required.", parent=root)
+        root.destroy()
+        sys.exit(1)
+
+    license_token = sd.askstring("License Setup", "License token:", show="*", parent=root)
+    if not license_token:
+        messagebox.showerror("Error", "License token is required.", parent=root)
+        root.destroy()
+        sys.exit(1)
+
+    config = DEFAULT_CONFIG.copy()
+    config["license_api_url"] = license_api_url.strip()
+    config["license_token"] = license_token.strip()
+
     set_master_password(password)
-    save_config(DEFAULT_CONFIG, password)
+    save_config(config, password)
     messagebox.showinfo("Done", "Setup complete! The app will now launch.\n\n"
         "Tip: Press Ctrl+Shift+M anytime to access master panel.", parent=root)
     root.destroy()
-    return DEFAULT_CONFIG.copy()
+    return config
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
 
@@ -660,6 +712,10 @@ def main():
         config = first_time_setup()
         if config is None:
             sys.exit(0)
+    else:
+        merged_config = DEFAULT_CONFIG.copy()
+        merged_config.update(config)
+        config = merged_config
 
     run_app(config)
 
