@@ -3,28 +3,10 @@
 import { useState, useMemo, useEffect } from 'react'
 import Link from 'next/link'
 import type { Client } from '@/lib/clients'
+import { isExpired, isExpiringSoon } from '@/lib/dates'
 import ClientRowActions from './ClientRowActions'
 
 type FilterType = 'all' | 'active' | 'disabled' | 'expired' | 'expiring-soon'
-
-function todayDate() {
-  return new Date(new Date().toDateString())
-}
-
-function soonDate() {
-  const d = new Date()
-  d.setDate(d.getDate() + 7)
-  return d
-}
-
-function isExpired(expiryDate: string) {
-  return new Date(expiryDate) < todayDate()
-}
-
-function isExpiringSoon(expiryDate: string) {
-  const expiry = new Date(expiryDate)
-  return expiry >= todayDate() && expiry <= soonDate()
-}
 
 function maskUserId(userId: string) {
   return userId.slice(0, 8) + '…'
@@ -33,17 +15,10 @@ function maskUserId(userId: string) {
 function computeStats(clients: Client[]) {
   return {
     total: clients.length,
-    active: clients.filter(
-      (c) => c.status === 'enabled' && new Date(c.expiryDate) >= todayDate(),
-    ).length,
+    active: clients.filter((c) => c.status === 'enabled' && !isExpired(c.expiryDate)).length,
     disabled: clients.filter((c) => c.status === 'disabled').length,
-    expired: clients.filter((c) => new Date(c.expiryDate) < todayDate()).length,
-    expiringSoon: clients.filter(
-      (c) =>
-        c.status === 'enabled' &&
-        new Date(c.expiryDate) >= todayDate() &&
-        new Date(c.expiryDate) <= soonDate(),
-    ).length,
+    expired: clients.filter((c) => isExpired(c.expiryDate)).length,
+    expiringSoon: clients.filter((c) => c.status === 'enabled' && isExpiringSoon(c.expiryDate)).length,
   }
 }
 
@@ -64,20 +39,13 @@ export default function ClientsView({ clients }: { clients: Client[] }) {
     let result = clients
 
     if (filter === 'active') {
-      result = result.filter(
-        (c) => c.status === 'enabled' && new Date(c.expiryDate) >= todayDate(),
-      )
+      result = result.filter((c) => c.status === 'enabled' && !isExpired(c.expiryDate))
     } else if (filter === 'disabled') {
       result = result.filter((c) => c.status === 'disabled')
     } else if (filter === 'expired') {
-      result = result.filter((c) => new Date(c.expiryDate) < todayDate())
+      result = result.filter((c) => isExpired(c.expiryDate))
     } else if (filter === 'expiring-soon') {
-      result = result.filter(
-        (c) =>
-          c.status === 'enabled' &&
-          new Date(c.expiryDate) >= todayDate() &&
-          new Date(c.expiryDate) <= soonDate(),
-      )
+      result = result.filter((c) => c.status === 'enabled' && isExpiringSoon(c.expiryDate))
     }
 
     if (search.trim()) {

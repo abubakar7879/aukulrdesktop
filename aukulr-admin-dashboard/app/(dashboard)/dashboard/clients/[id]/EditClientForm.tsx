@@ -6,6 +6,7 @@ import { editClient, toggleClientStatus, removeClient, type ClientFormState } fr
 import type { Client } from '@/lib/clients'
 import type { AuditEntry } from '@/lib/audit'
 import Link from 'next/link'
+import { isExpired, isExpiringSoon } from '@/lib/dates'
 
 function formatTimestamp(iso: string): string {
   return new Date(iso).toLocaleString('en-GB', {
@@ -36,17 +37,6 @@ function formatAuditAction(entry: AuditEntry): string {
   }
 }
 
-function isExpired(d: string) {
-  return new Date(d) < new Date(new Date().toDateString())
-}
-
-function isExpiringSoon(d: string) {
-  const expiry = new Date(d)
-  const today = new Date(new Date().toDateString())
-  const soon = new Date()
-  soon.setDate(soon.getDate() + 7)
-  return expiry >= today && expiry <= soon
-}
 
 export default function EditClientForm({
   client,
@@ -84,6 +74,7 @@ export default function EditClientForm({
       setSuccessVisible(true)
       setSavedUserId(currentUserId)
       setUserIdConfirmed(false)
+      router.refresh()
       const t = setTimeout(() => setSuccessVisible(false), 3000)
       return () => clearTimeout(t)
     }
@@ -177,7 +168,7 @@ export default function EditClientForm({
               required
               value={currentUserId}
               onChange={(e) => {
-                setCurrentUserId(e.target.value)
+                setCurrentUserId(e.target.value.toLowerCase())
                 setUserIdConfirmed(false)
               }}
               className="w-full px-3 py-2 bg-white text-gray-900 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
