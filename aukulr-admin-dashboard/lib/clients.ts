@@ -1,16 +1,12 @@
 export type Client = {
   id: string
   name: string
-  userId: string
+  userId: string        // hash of client machine CPU ID — entered manually by admin
   status: 'enabled' | 'disabled'
-  expiryDate: string
-  createdAt: string
-}
-
-function makeUserId(): string {
-  return Array.from(crypto.getRandomValues(new Uint8Array(16)))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
+  expiryDate: string    // ISO date YYYY-MM-DD
+  createdAt: string     // ISO date YYYY-MM-DD
+  lastUpdated: string   // ISO date YYYY-MM-DD
+  notes?: string
 }
 
 const store: Client[] = [
@@ -21,6 +17,7 @@ const store: Client[] = [
     status: 'enabled',
     expiryDate: '2026-12-31',
     createdAt: '2026-01-10',
+    lastUpdated: '2026-01-10',
   },
   {
     id: '2',
@@ -29,6 +26,8 @@ const store: Client[] = [
     status: 'enabled',
     expiryDate: '2026-06-28',
     createdAt: '2026-02-14',
+    lastUpdated: '2026-06-20',
+    notes: 'Renewal requested — awaiting payment confirmation.',
   },
   {
     id: '3',
@@ -37,6 +36,8 @@ const store: Client[] = [
     status: 'disabled',
     expiryDate: '2026-09-15',
     createdAt: '2026-03-01',
+    lastUpdated: '2026-05-12',
+    notes: 'Disabled pending hardware upgrade.',
   },
   {
     id: '4',
@@ -45,6 +46,7 @@ const store: Client[] = [
     status: 'enabled',
     expiryDate: '2026-05-01',
     createdAt: '2025-11-20',
+    lastUpdated: '2025-11-20',
   },
   {
     id: '5',
@@ -53,6 +55,7 @@ const store: Client[] = [
     status: 'disabled',
     expiryDate: '2026-03-31',
     createdAt: '2025-12-05',
+    lastUpdated: '2025-12-05',
   },
 ]
 
@@ -66,17 +69,26 @@ export async function getClient(id: string): Promise<Client | null> {
   return store.find((c) => c.id === id) ?? null
 }
 
+export async function checkUserIdExists(userId: string, excludeId?: string): Promise<boolean> {
+  return store.some((c) => c.userId === userId && c.id !== excludeId)
+}
+
 export async function addClient(input: {
   name: string
+  userId: string
   expiryDate: string
+  notes?: string
 }): Promise<Client> {
+  const today = new Date().toISOString().slice(0, 10)
   const client: Client = {
     id: String(nextId++),
     name: input.name,
-    userId: makeUserId(),
+    userId: input.userId,
     status: 'enabled',
     expiryDate: input.expiryDate,
-    createdAt: new Date().toISOString().slice(0, 10),
+    createdAt: today,
+    lastUpdated: today,
+    notes: input.notes,
   }
   store.push(client)
   return client
@@ -84,21 +96,26 @@ export async function addClient(input: {
 
 export async function updateClient(
   id: string,
-  input: Partial<Pick<Client, 'name' | 'expiryDate'>>,
+  input: Partial<Pick<Client, 'name' | 'userId' | 'expiryDate' | 'notes'>>,
 ): Promise<Client> {
   const idx = store.findIndex((c) => c.id === id)
   if (idx === -1) throw new Error(`Client ${id} not found`)
-  store[idx] = { ...store[idx], ...input }
+  store[idx] = {
+    ...store[idx],
+    ...input,
+    lastUpdated: new Date().toISOString().slice(0, 10),
+  }
   return store[idx]
 }
 
-export async function setClientStatus(
-  id: string,
-  enabled: boolean,
-): Promise<Client> {
+export async function setClientStatus(id: string, enabled: boolean): Promise<Client> {
   const idx = store.findIndex((c) => c.id === id)
   if (idx === -1) throw new Error(`Client ${id} not found`)
-  store[idx] = { ...store[idx], status: enabled ? 'enabled' : 'disabled' }
+  store[idx] = {
+    ...store[idx],
+    status: enabled ? 'enabled' : 'disabled',
+    lastUpdated: new Date().toISOString().slice(0, 10),
+  }
   return store[idx]
 }
 
