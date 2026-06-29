@@ -31,7 +31,7 @@ export async function createClient(
   }
 
   const client = await addClient({ name, userId, expiryDate, notes })
-  addAuditEntry({ clientId: client.id, actor: 'admin', action: 'created' })
+  await addAuditEntry({ clientId: client.id, actor: 'admin', action: 'created' })
   redirect('/dashboard')
 }
 
@@ -67,13 +67,13 @@ export async function editClient(
   await updateClient(id, { name, userId, expiryDate, notes })
 
   if (userIdChanged) {
-    addAuditEntry({ clientId: id, actor: 'admin', action: 'userid_changed', before: prevUserId, after: userId })
+    await addAuditEntry({ clientId: id, actor: 'admin', action: 'userid_changed', before: prevUserId, after: userId })
   }
   if (expiryChanged) {
-    addAuditEntry({ clientId: id, actor: 'admin', action: 'expiry_changed', before: prevExpiry, after: expiryDate })
+    await addAuditEntry({ clientId: id, actor: 'admin', action: 'expiry_changed', before: prevExpiry, after: expiryDate })
   }
   if (notesChanged) {
-    addAuditEntry({ clientId: id, actor: 'admin', action: 'notes_updated' })
+    await addAuditEntry({ clientId: id, actor: 'admin', action: 'notes_updated' })
   }
 
   return { success: true }
@@ -81,7 +81,7 @@ export async function editClient(
 
 export async function toggleClientStatus(id: string, enabled: boolean): Promise<void> {
   await setClientStatus(id, enabled)
-  addAuditEntry({
+  await addAuditEntry({
     clientId: id,
     actor: 'admin',
     action: enabled ? 'enabled' : 'disabled',
@@ -90,5 +90,5 @@ export async function toggleClientStatus(id: string, enabled: boolean): Promise<
 
 export async function removeClient(id: string): Promise<void> {
   await deleteClient(id)
-  addAuditEntry({ clientId: id, actor: 'admin', action: 'removed' })
+  await addAuditEntry({ clientId: id, actor: 'admin', action: 'removed' })
 }

@@ -1,0 +1,42 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Client {
+  id          String       @id @default(cuid())
+  name        String
+  userId      String       @unique
+  status      String       @default("enabled")
+  expiryDate  String
+  createdAt   String
+  lastUpdated String
+  notes       String?
+  auditLog    AuditEntry[]
+}
+
+model AuditEntry {
+  id        String @id @default(cuid())
+  clientId  String
+  timestamp String
+  actor     String
+  action    String
+  before    String?
+  after     String?
+  client    Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+}
+
+model RegistrationRequest {
+  id          String @id @default(cuid())
+  cpuId       String @unique
+  clinicName  String
+  contact     String
+  machineName String
+  windowsUser String
+  requestedAt String
+  status      String @default("pending")
+}

@@ -14,7 +14,6 @@ subprocess.run([
     "--onefile",
     "--windowed",                          # no console window
     "--name", "AukulrManager",
-    "--add-data", "ppe_manager.py;.",      # bundle source
     "--hidden-import", "cryptography",
     "--hidden-import", "requests",
     "--hidden-import", "psutil",

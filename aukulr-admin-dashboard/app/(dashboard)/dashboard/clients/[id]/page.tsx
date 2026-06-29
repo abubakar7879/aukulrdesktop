@@ -12,6 +12,6 @@ export default async function EditClientPage({
   const client = await getClient(id)
   if (!client) notFound()
 
-  const auditLog = getClientAuditLog(id)
+  const auditLog = await getClientAuditLog(id)
   return <EditClientForm client={client} auditLog={auditLog} />
 }
